@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Dispute Dashboard</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand small">
+      <a href="/" class="back-link">← Back</a>
+      <h1>Dispute Dashboard</h1>
+    </div>
+    <nav class="nav">
+      <a href="/">New Dispute</a>
+    </nav>
+  </header>
+
+  <main class="dashboard" role="main">
+    <div class="dashboard-top">
+      <div class="cards">
+        <div class="stat card">
+          <div class="stat-value" id="totalCount">—</div>
+          <div class="stat-label">Total</div>
+        </div>
+        <div class="stat card">
+          <div class="stat-value" id="openCount">—</div>
+          <div class="stat-label">Open</div>
+        </div>
+        <div class="stat card">
+          <div class="stat-value" id="resolvedCount">—</div>
+          <div class="stat-label">Resolved</div>
+        </div>
+        <div class="stat card">
+          <div class="stat-value" id="rejectedCount">—</div>
+          <div class="stat-label">Rejected</div>
+        </div>
+      </div>
+      <div class="filters card">
+        <input id="searchInput" placeholder="Search by transaction, merchant, or UTR" aria-label="Search disputes" />
+      </div>
+    </div>
+
+    <section class="card table-section">
+      <h2>📊 Recent Disputes</h2>
+      <div class="table-wrap">
+        <table id="disputeTable">
+          <thead>
+            <tr>
+              <th>Transaction</th>
+              <th>Status</th>
+              <th>Explanation</th>
+              <th>Time</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div id="emptyState" class="muted" hidden>No disputes yet.</div>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+  <script>
+    // Render fetched disputes using helper in app.js
+    if (typeof loadDisputes === 'function') {
+      loadDisputes();
+    } else {
+      // fallback: inline fetch
+      fetch('/disputes')
+        .then(res => res.json())
+        .then(data => {
+          const tbody = document.querySelector('#disputeTable tbody');
+          if (!data || data.length === 0) {
+            document.getElementById('emptyState').hidden = false;
+            return;
+          }
+          data.forEach(d => {
+            const row = document.createElement('tr');
+            const statusClass = (d.final_status || '').toLowerCase().replace(/\s+/g,'-');
+            row.innerHTML = `
+              <td>${d.transaction_id || '-'}</td>
+              <td><span class="badge ${statusClass}">${d.final_status || '-'}</span></td>
+              <td>${d.explanation || '-'}</td>
+              <td>${d.created_at || '-'}</td>
+            `;
+            tbody.appendChild(row);
+          });
+        })
+        .catch(() => {
+          document.getElementById('emptyState').hidden = false;
+        });
+    }
+  </script>
+</body>
+</html>

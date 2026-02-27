@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>UPI Dispute Resolution</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<div class="page">
+  <header class="topbar" role="banner">
+    <div class="brand">
+      <h1>UPI Dispute Assistant</h1>
+      <p class="tag">Fast, explainable dispute guidance</p>
+    </div>
+    <nav class="nav" role="navigation" aria-label="Main">
+      <a href="/dashboard" class="nav-link">Dashboard</a>
+    </nav>
+  </header>
+
+  <main class="content" role="main">
+    <section class="card chat-card" aria-labelledby="chat-title">
+      <h2 id="chat-title">Dispute Assistant Chat</h2>
+      <div id="chatWindow" class="chat-window" aria-live="polite">
+        <div class="message bot">
+          <div class="bubble">Hi — tell me about the transaction and I'll help raise a dispute. Include amount, UTR, and merchant if available.</div>
+          <div class="meta">Assistant</div>
+        </div>
+      </div>
+
+      <form id="chatForm" class="chat-form" onsubmit="event.preventDefault(); submitDisputeChat();">
+        <input id="chatInput" type="text" placeholder="Type your message or paste transaction details..." aria-label="Message" />
+        <button id="chatSend" type="submit">Send</button>
+        <div id="spinner" class="spinner" aria-hidden="true"></div>
+      </form>
+    </section>
+
+    <aside class="card status-card" id="resultCard" aria-live="polite">
+      <h2>Latest Status</h2>
+      <div id="statusText">Waiting for input</div>
+      <p id="explanationText" class="muted"></p>
+    </aside>
+  </main>
+
+  <footer class="footer">
+    <small>Powered by UPI Dispute Agent</small>
+  </footer>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
