@@ -1,4 +1,4 @@
-function submitDispute() {
+﻿function submitDispute() {
   const textEl = document.getElementById("userInput");
   const submitBtn = document.getElementById('submitBtn');
   const spinner = document.getElementById('spinner');
@@ -13,6 +13,68 @@ function submitDispute() {
   // UI: show processing state
   submitBtn.disabled = true;
   spinner.setAttribute('aria-hidden', 'false');
+  // Charts and theme globals
+  let statusChart = null;
+  let historyChart = null;
+
+  function initCharts() {
+    const statusCtx = document.getElementById('statusChart');
+    const historyCtx = document.getElementById('historyChart');
+
+    if (statusCtx && !statusChart) {
+      statusChart = new Chart(statusCtx, {
+        type: 'doughnut',
+        data: {
+          labels: ['Pending','Approved','Rejected','Other'],
+          datasets: [{
+            data: [0,0,0,0],
+            backgroundColor: ['#f59e0b','#10b981','#ef4444','#94a3b8'],
+            hoverOffset: 8
+          }]
+        },
+        options: {
+          plugins: { legend: { position: 'bottom' } },
+          maintainAspectRatio: false
+        }
+      });
+    }
+
+    if (historyCtx && !historyChart) {
+      historyChart = new Chart(historyCtx, {
+        type: 'bar',
+        data: {
+          labels: ['Pending','Approved','Rejected'],
+          datasets: [{ label: 'Count', data: [0,0,0], backgroundColor: ['#f59e0b','#10b981','#ef4444'] }]
+        },
+        options: { plugins: { legend: { display: false } }, maintainAspectRatio: false }
+      });
+    }
+  }
+
+  function updateCharts(stats) {
+    if (statusChart) {
+      const other = Math.max(0, (stats.total || 0) - ((stats.pending||0)+(stats.approved||0)+(stats.rejected||0)));
+      statusChart.data.datasets[0].data = [stats.pending||0, stats.approved||0, stats.rejected||0, other];
+      statusChart.update();
+    }
+    if (historyChart) {
+      historyChart.data.datasets[0].data = [stats.pending||0, stats.approved||0, stats.rejected||0];
+      historyChart.update();
+    }
+  }
+
+  function initThemeToggle() {
+    const btns = document.querySelectorAll('#themeToggle');
+    const stored = localStorage.getItem('dark-mode');
+    if (stored === 'true') document.body.classList.add('dark-mode');
+
+    btns.forEach(b => b.addEventListener('click', () => {
+      const isDark = document.body.classList.toggle('dark-mode');
+      localStorage.setItem('dark-mode', isDark ? 'true' : 'false');
+      b.setAttribute('aria-pressed', isDark ? 'true' : 'false');
+    }));
+  }
+
   statusEl.innerText = "Processing...";
   explanationEl.innerText = "";
 
@@ -38,16 +100,19 @@ function submitDispute() {
     .finally(() => {
       submitBtn.disabled = false;
       spinner.setAttribute('aria-hidden', 'true');
-    });
+        if (total) total.innerText = stats.total;
 }
 
 // Load disputes for dashboard
 function loadDisputes() {
   fetch('/disputes')
-    .then(res => res.json())
-    .then(data => {
-      const tbody = document.querySelector('#disputeTable tbody');
-      const total = document.getElementById('totalCount');
+        if (total) animateCount(total, stats.total);
+        if (open) animateCount(open, stats.pending);
+        if (resolved) animateCount(resolved, stats.approved);
+        if (rejected) animateCount(rejected, stats.rejected);
+
+        // update charts
+        updateCharts(stats);
       const open = document.getElementById('openCount');
       const resolved = document.getElementById('resolvedCount');
       const rejected = document.getElementById('rejectedCount');
@@ -72,20 +137,10 @@ function loadDisputes() {
       if (resolved) resolved.innerText = stats.approved;
       if (rejected) rejected.innerText = stats.rejected;
       
-      // Update status chart if present
-      try {
-        if (window.statusChart && typeof window.statusChart.update === 'function') {
-          const others = Math.max(0, stats.total - (stats.approved + stats.pending + stats.rejected));
-          window.statusChart.data.datasets[0].data = [stats.approved, stats.pending, stats.rejected, others];
-          window.statusChart.update();
-        }
-      } catch (e) {
-        // ignore chart errors
-      }
-      // animate counters (use correct stat keys to avoid NaN)
+      // animate counters
       if (total) animateCount(total, stats.total);
-      if (open) animateCount(open, stats.pending);
-      if (resolved) animateCount(resolved, stats.approved);
+      if (open) animateCount(open, stats.open);
+      if (resolved) animateCount(resolved, stats.resolved);
       if (rejected) animateCount(rejected, stats.rejected);
 
       data.forEach(d => {
@@ -102,14 +157,10 @@ function loadDisputes() {
         tbody.appendChild(row);
       });
 
-      // wire search + clear button
+      // wire search
       const search = document.getElementById('searchInput');
       if (search) {
         search.addEventListener('input', (e) => filterDisputes(e.target.value, data));
-      }
-      const clearBtn = document.getElementById('clearSearch');
-      if (clearBtn && search) {
-        clearBtn.addEventListener('click', () => { search.value = ''; filterDisputes(''); search.focus(); });
       }
     })
     .catch(() => {
@@ -187,31 +238,6 @@ function appendMessage(role, text) {
   win.scrollTop = win.scrollHeight;
 }
 
-  // Append message allowing HTML content (used for small safe highlights)
-  function appendHTMLMessage(role, html) {
-    const win = document.getElementById('chatWindow');
-    if (!win) return;
-    const msg = document.createElement('div');
-    msg.className = 'message ' + (role === 'user' ? 'user' : 'bot');
-    const bubble = document.createElement('div');
-    bubble.className = 'bubble';
-    bubble.innerHTML = html;
-    const meta = document.createElement('div');
-    meta.className = 'meta';
-    meta.textContent = role === 'user' ? 'You' : 'Assistant';
-    msg.appendChild(bubble);
-    msg.appendChild(meta);
-    win.appendChild(msg);
-    bubble.style.animation = 'bubbleIn 320ms cubic-bezier(.2,.9,.2,1) both';
-    win.scrollTop = win.scrollHeight;
-  }
-
-  // small helper to escape raw text when inserting into innerHTML
-  function escapeHtml(unsafe) {
-    if (!unsafe) return '';
-    return unsafe.replace(/[&<>",']/g, function(m) { return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]); });
-  }
-
 // simple count-up animation for stat cards
 function animateCount(el, to) {
   const start = 0;
@@ -234,42 +260,11 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   const chatInput = document.getElementById('chatInput');
   if (chatInput) chatInput.focus();
-  // initialize status chart on dashboard
-  if (typeof initStatusChart === 'function') initStatusChart();
+  initCharts();
+  initThemeToggle();
+  // if on dashboard, load disputes (app.js already calls loadDisputes elsewhere)
+  if (typeof loadDisputes === 'function') loadDisputes();
 });
-
-
-// Initialize a donut chart showing dispute status counts.
-function initStatusChart() {
-  const canvas = document.getElementById('statusChart');
-  if (!canvas) return;
-  const ctx = canvas.getContext('2d');
-  // Safe: create a simple doughnut chart
-  window.statusChart = new Chart(ctx, {
-    type: 'doughnut',
-    data: {
-      labels: ['Approved', 'Pending', 'Rejected', 'Other'],
-      datasets: [{
-        data: [0,0,0,0],
-        backgroundColor: ['#10b981', '#f59e0b', '#ef4444', '#6366f1'],
-        borderWidth: 0
-      }]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      cutout: '65%',
-      plugins: {
-        legend: { position: 'bottom', labels: { boxWidth:12, padding:8 } },
-        tooltip: { callbacks: { label: function(ctx){ return ctx.label + ': ' + ctx.parsed; } } }
-      }
-    }
-  });
-  // Populate initial data by loading disputes if on dashboard
-  if (window.location.pathname && window.location.pathname.includes('dashboard')) {
-    if (typeof loadDisputes === 'function') loadDisputes();
-  }
-}
 
 function submitDisputeChat() {
   const input = document.getElementById('chatInput');

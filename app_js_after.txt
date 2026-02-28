@@ -1,0 +1,514 @@
+﻿// Frontend application JS (chat, dashboard, charts, theme)
+
+// -----------------------------
+// Charts and theme globals
+// -----------------------------
+let statusChart = null;
+let historyChart = null;
+
+function initCharts() {
+  const statusCtx = document.getElementById('statusChart');
+  const historyCtx = document.getElementById('historyChart');
+
+  try {
+    if (statusCtx && !statusChart && typeof Chart !== 'undefined') {
+      statusChart = new Chart(statusCtx, {
+        type: 'doughnut',
+        data: {
+          labels: ['Pending','Approved','Rejected','Other'],
+          datasets: [{
+            data: [0,0,0,0],
+            backgroundColor: ['#f59e0b','#10b981','#ef4444','#94a3b8'],
+            hoverOffset: 8
+          }]
+        },
+        options: { plugins: { legend: { position: 'bottom' } }, maintainAspectRatio: false }
+      });
+    }
+
+    if (historyCtx && !historyChart && typeof Chart !== 'undefined') {
+      historyChart = new Chart(historyCtx, {
+        type: 'bar',
+        data: { labels: ['Pending','Approved','Rejected'], datasets: [{ label: 'Count', data: [0,0,0], backgroundColor: ['#f59e0b','#10b981','#ef4444'] }] },
+        options: { plugins: { legend: { display: false } }, maintainAspectRatio: false }
+      });
+    }
+  } catch (e) {
+    // Chart.js not available or error — silently continue
+    console.warn('Chart init failed', e);
+  }
+}
+
+function updateCharts(stats) {
+  if (statusChart) {
+    const other = Math.max(0, (stats.total || 0) - ((stats.pending||0)+(stats.approved||0)+(stats.rejected||0)));
+    statusChart.data.datasets[0].data = [stats.pending||0, stats.approved||0, stats.rejected||0, other];
+    statusChart.update();
+  }
+  if (historyChart) {
+    historyChart.data.datasets[0].data = [stats.pending||0, stats.approved||0, stats.rejected||0];
+    historyChart.update();
+  }
+}
+
+function initThemeToggle() {
+  const btns = document.querySelectorAll('#themeToggle');
+  const stored = localStorage.getItem('dark-mode');
+  if (stored === 'true') document.body.classList.add('dark-mode');
+
+  btns.forEach(b => b.addEventListener('click', () => {
+    const isDark = document.body.classList.toggle('dark-mode');
+    localStorage.setItem('dark-mode', isDark ? 'true' : 'false');
+    b.setAttribute('aria-pressed', isDark ? 'true' : 'false');
+  }));
+}
+
+// -----------------------------
+// Submit a simple dispute (used by some forms)
+// -----------------------------
+function submitDispute() {
+  const textEl = document.getElementById("userInput");
+  const submitBtn = document.getElementById('submitBtn');
+  const spinner = document.getElementById('spinner');
+  const statusEl = document.getElementById("statusText");
+  const explanationEl = document.getElementById("explanationText");
+  if (!textEl) return;
+  const text = textEl.value.trim();
+  if (!text) { textEl.focus(); return; }
+
+  if (submitBtn) submitBtn.disabled = true;
+  if (spinner) spinner.setAttribute('aria-hidden', 'false');
+  if (statusEl) statusEl.innerText = "Processing...";
+  if (explanationEl) explanationEl.innerText = "";
+
+  fetch("/dispute", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message: text })
+  })
+    .then(res => res.json())
+    .then(data => {
+      if (statusEl) {
+        if (data.questions && data.questions.length) {
+          statusEl.innerText = "Need more information";
+          explanationEl.innerText = data.questions[0];
+        } else {
+          statusEl.innerText = data.status || 'Result';
+          explanationEl.innerText = data.explanation || '';
+        }
+      }
+    })
+    .catch(() => {
+      if (statusEl) statusEl.innerText = "Error";
+      if (explanationEl) explanationEl.innerText = "Something went wrong. Please try again.";
+    })
+    .finally(() => {
+      if (submitBtn) submitBtn.disabled = false;
+      if (spinner) spinner.setAttribute('aria-hidden', 'true');
+    });
+}
+
+// -----------------------------
+// Load disputes for dashboard
+// -----------------------------
+function loadDisputes() {
+  fetch('/disputes')
+    .then(res => res.json())
+    .then(data => {
+      const tbody = document.querySelector('#disputeTable tbody');
+      const total = document.getElementById('totalCount');
+      const open = document.getElementById('openCount');
+      const resolved = document.getElementById('resolvedCount');
+      const rejected = document.getElementById('rejectedCount');
+      if (tbody) tbody.innerHTML = '';
+
+      if (!data || data.length === 0) {
+        const empty = document.getElementById('emptyState'); if (empty) empty.hidden = false;
+        if (total) total.innerText = '0';
+        updateCharts({ total: 0, pending: 0, approved: 0, rejected: 0 });
+        return;
+      }
+
+      const stats = { total: data.length, pending: 0, approved: 0, rejected: 0 };
+      data.forEach(d => {
+        const computed = computeStatus(d);
+        if (computed.key === 'pending') stats.pending++;
+        if (computed.key === 'approved') stats.approved++;
+        if (computed.key === 'rejected') stats.rejected++;
+      });
+
+      if (total) animateCount(total, stats.total);
+      if (open) animateCount(open, stats.pending);
+      if (resolved) animateCount(resolved, stats.approved);
+      if (rejected) animateCount(rejected, stats.rejected);
+
+      updateCharts(stats);
+
+      data.forEach(d => {
+        if (!tbody) return;
+        const row = document.createElement('tr');
+        const computed = computeStatus(d);
+        const statusClass = computed.key;
+        const label = computed.label;
+        row.innerHTML = `
+          <td>${d.transaction_id || '-'}</td>
+          <td><span class="badge ${statusClass}" title="${d.final_status || ''}">${label}</span></td>
+          <td>${d.explanation || '-'}</td>
+          <td>${d.created_at || '-'}</td>
+        `;
+        tbody.appendChild(row);
+      });
+
+      const search = document.getElementById('searchInput');
+      if (search) search.addEventListener('input', (e) => filterDisputes(e.target.value, data));
+    })
+    .catch(() => {
+      const empty = document.getElementById('emptyState'); if (empty) empty.hidden = false;
+    });
+}
+
+function filterDisputes(query, data) {
+  const q = (query || '').toLowerCase().trim();
+  const tbody = document.querySelector('#disputeTable tbody');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+  const filtered = data.filter(d => {
+    if (!q) return true;
+    return (d.transaction_id || '').toLowerCase().includes(q)
+      || (d.explanation || '').toLowerCase().includes(q)
+      || (d.merchant_name || '').toLowerCase().includes(q)
+      || (d.utr || '').toLowerCase().includes(q);
+  });
+  if (filtered.length === 0) {
+    const empty = document.getElementById('emptyState'); if (empty) empty.hidden = false;
+  }
+  filtered.forEach(d => {
+    const row = document.createElement('tr');
+    const computed = computeStatus(d);
+    const statusClass = computed.key;
+    const label = computed.label;
+    row.innerHTML = `
+      <td>${d.transaction_id || '-'}</td>
+      <td><span class="badge ${statusClass}" title="${d.final_status || ''}">${label}</span></td>
+      <td>${d.explanation || '-'}</td>
+      <td>${d.created_at || '-'}</td>
+    `;
+    tbody.appendChild(row);
+  });
+}
+
+function computeStatus(d) {
+  const raw = (d.final_status || '').toLowerCase();
+  const text = (d.explanation || '').toLowerCase();
+  const source = raw || text || '';
+  const approvedWords = ['resolved', 'success', 'settled', 'approved', 'completed'];
+  const rejectedWords = ['reject', 'failed', 'declined', 'error', 'denied', 'unauthorized'];
+  const pendingWords = ['open', 'pending', 'escalate', 'escalated', 'review', 'processing', 'need more', 'awaiting'];
+  for (const w of approvedWords) if (source.includes(w)) return { key: 'approved', label: 'Approved' };
+  for (const w of rejectedWords) if (source.includes(w)) return { key: 'rejected', label: 'Rejected' };
+  for (const w of pendingWords) if (source.includes(w)) return { key: 'pending', label: 'Pending' };
+  if (raw) return { key: raw.replace(/\s+/g,'-'), label: (d.final_status || raw).toString() };
+  return { key: 'pending', label: 'Pending' };
+}
+
+function appendMessage(role, text) {
+  const win = document.getElementById('chatWindow');
+  if (!win) return;
+  const msg = document.createElement('div');
+  msg.className = 'message ' + (role === 'user' ? 'user' : 'bot');
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble';
+  bubble.textContent = text;
+  const meta = document.createElement('div');
+  meta.className = 'meta';
+  meta.textContent = role === 'user' ? 'You' : 'Assistant';
+  msg.appendChild(bubble);
+  msg.appendChild(meta);
+  win.appendChild(msg);
+  bubble.style.animation = 'bubbleIn 320ms cubic-bezier(.2,.9,.2,1) both';
+  win.scrollTop = win.scrollHeight;
+}
+
+function animateCount(el, to) {
+  if (!el) return;
+  const start = 0; const duration = 800; let startTime = null;
+  function step(ts) {
+    if (!startTime) startTime = ts;
+    const progress = Math.min((ts - startTime) / duration, 1);
+    const value = Math.floor(progress * (to - start) + start);
+    el.innerText = value;
+    if (progress < 1) requestAnimationFrame(step);
+  }
+  requestAnimationFrame(step);
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.querySelectorAll('.card').forEach((c, i) => setTimeout(() => c.classList.add('animate-in'), 70 * i));
+  const chatInput = document.getElementById('chatInput'); if (chatInput) chatInput.focus();
+  initCharts(); initThemeToggle(); if (typeof loadDisputes === 'function') loadDisputes();
+});
+
+function submitDisputeChat() {
+  const input = document.getElementById('chatInput');
+  const text = (input && input.value || '').trim(); if (!text) return;
+  appendMessage('user', text); input.value = '';
+  const spinner = document.getElementById('spinner'); const statusEl = document.getElementById('statusText'); const explanationEl = document.getElementById('explanationText');
+  if (spinner) spinner.setAttribute('aria-hidden','false'); if (statusEl) statusEl.innerText = 'Processing...'; if (explanationEl) explanationEl.innerText = '';
+
+  fetch('/dispute', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ message: text }) })
+    .then(res => res.json())
+    .then(data => {
+      if (data.questions && data.questions.length) {
+        appendMessage('bot', data.questions[0]); if (statusEl) statusEl.innerText = 'Need more information'; if (explanationEl) explanationEl.innerText = data.questions[0];
+      } else {
+        const reply = data.explanation || data.status || 'Done'; appendMessage('bot', reply); if (statusEl) statusEl.innerText = data.status || 'Result'; if (explanationEl) explanationEl.innerText = data.explanation || '';
+      }
+    })
+    .catch(() => { appendMessage('bot', 'Sorry — something went wrong.'); if (statusEl) statusEl.innerText = 'Error'; if (explanationEl) explanationEl.innerText = 'Something went wrong. Please try again.'; })
+    .finally(() => { if (spinner) spinner.setAttribute('aria-hidden','true'); });
+}
+// Frontend application JS (chat, dashboard, charts, theme)
+
+// -----------------------------
+// Submit a simple dispute (used by some forms)
+// -----------------------------
+function submitDispute() {
+  const textEl = document.getElementById("userInput");
+  const submitBtn = document.getElementById('submitBtn');
+  const spinner = document.getElementById('spinner');
+  const statusEl = document.getElementById("statusText");
+  const explanationEl = document.getElementById("explanationText");
+  if (!textEl) return;
+  const text = textEl.value.trim();
+  if (!text) { textEl.focus(); return; }
+
+  // UI: show processing state
+  if (submitBtn) submitBtn.disabled = true;
+  if (spinner) spinner.setAttribute('aria-hidden', 'false');
+
+  if (statusEl) statusEl.innerText = "Processing...";
+  if (explanationEl) explanationEl.innerText = "";
+
+  fetch("/dispute", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message: text })
+  })
+    .then(res => res.json())
+    .then(data => {
+      if (statusEl) {
+        if (data.questions && data.questions.length) {
+          statusEl.innerText = "Need more information";
+          explanationEl.innerText = data.questions[0];
+        } else {
+          statusEl.innerText = data.status || 'Result';
+          explanationEl.innerText = data.explanation || '';
+        }
+      }
+    })
+    .catch(() => {
+      if (statusEl) statusEl.innerText = "Error";
+      if (explanationEl) explanationEl.innerText = "Something went wrong. Please try again.";
+    })
+    .finally(() => {
+      if (submitBtn) submitBtn.disabled = false;
+      if (spinner) spinner.setAttribute('aria-hidden', 'true');
+    });
+}
+
+// Load disputes for dashboard
+function loadDisputes() {
+  fetch('/disputes')
+        if (total) animateCount(total, stats.total);
+        if (open) animateCount(open, stats.pending);
+        if (resolved) animateCount(resolved, stats.approved);
+        if (rejected) animateCount(rejected, stats.rejected);
+
+        // update charts
+        updateCharts(stats);
+      const open = document.getElementById('openCount');
+      const resolved = document.getElementById('resolvedCount');
+      const rejected = document.getElementById('rejectedCount');
+      tbody.innerHTML = '';
+
+      if (!data || data.length === 0) {
+        const empty = document.getElementById('emptyState'); if (empty) empty.hidden = false;
+        if (total) total.innerText = '0';
+        return;
+      }
+
+      // Load disputes for dashboard
+      function loadDisputes() {
+        fetch('/disputes')
+          .then(res => res.json())
+          .then(data => {
+            const tbody = document.querySelector('#disputeTable tbody');
+            const total = document.getElementById('totalCount');
+            const open = document.getElementById('openCount');
+            const resolved = document.getElementById('resolvedCount');
+            const rejected = document.getElementById('rejectedCount');
+            if (tbody) tbody.innerHTML = '';
+
+            if (!data || data.length === 0) {
+              const empty = document.getElementById('emptyState'); if (empty) empty.hidden = false;
+              if (total) total.innerText = '0';
+              updateCharts({ total: 0, pending: 0, approved: 0, rejected: 0 });
+              return;
+            }
+
+            // Stats
+            const stats = { total: data.length, pending: 0, approved: 0, rejected: 0 };
+            data.forEach(d => {
+              const computed = computeStatus(d);
+              if (computed.key === 'pending') stats.pending++;
+              if (computed.key === 'approved') stats.approved++;
+              if (computed.key === 'rejected') stats.rejected++;
+            });
+
+            if (total) animateCount(total, stats.total);
+            if (open) animateCount(open, stats.pending);
+            if (resolved) animateCount(resolved, stats.approved);
+            if (rejected) animateCount(rejected, stats.rejected);
+
+            // update charts
+            updateCharts(stats);
+
+            data.forEach(d => {
+              if (!tbody) return;
+              const row = document.createElement('tr');
+              const computed = computeStatus(d);
+              const statusClass = computed.key;
+              const label = computed.label;
+              row.innerHTML = `
+                <td>${d.transaction_id || '-'}</td>
+                <td><span class="badge ${statusClass}" title="${d.final_status || ''}">${label}</span></td>
+                <td>${d.explanation || '-'}</td>
+                <td>${d.created_at || '-'}</td>
+              `;
+              tbody.appendChild(row);
+            });
+
+            // wire search
+            const search = document.getElementById('searchInput');
+            if (search) {
+              search.addEventListener('input', (e) => filterDisputes(e.target.value, data));
+            }
+          })
+          .catch(() => {
+            const empty = document.getElementById('emptyState'); if (empty) empty.hidden = false;
+          });
+      }
+    row.innerHTML = `
+      <td>${d.transaction_id || '-'}</td>
+      <td><span class="badge ${statusClass}" title="${d.final_status || ''}">${label}</span></td>
+      <td>${d.explanation || '-'}</td>
+      <td>${d.created_at || '-'}</td>
+    `;
+    tbody.appendChild(row);
+  });
+}
+
+// derive a simple status label and key from whatever data we have
+function computeStatus(d) {
+  const raw = (d.final_status || '').toLowerCase();
+  const text = (d.explanation || '').toLowerCase();
+  const source = raw || text || '';
+
+  // keyword maps
+  const approvedWords = ['resolved', 'success', 'settled', 'approved', 'completed'];
+  const rejectedWords = ['reject', 'failed', 'declined', 'error', 'denied', 'unauthorized'];
+  const pendingWords = ['open', 'pending', 'escalate', 'escalated', 'review', 'processing', 'need more', 'awaiting'];
+
+  for (const w of approvedWords) if (source.includes(w)) return { key: 'approved', label: 'Approved' };
+  for (const w of rejectedWords) if (source.includes(w)) return { key: 'rejected', label: 'Rejected' };
+  for (const w of pendingWords) if (source.includes(w)) return { key: 'pending', label: 'Pending' };
+
+  // fallback: if there is some final_status text, show a cleaned version
+  if (raw) return { key: raw.replace(/\s+/g,'-'), label: (d.final_status || raw).toString() };
+  // last resort
+  return { key: 'pending', label: 'Pending' };
+}
+
+// Chat: append messages and handle send
+function appendMessage(role, text) {
+  const win = document.getElementById('chatWindow');
+  if (!win) return;
+  const msg = document.createElement('div');
+  msg.className = 'message ' + (role === 'user' ? 'user' : 'bot');
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble';
+  bubble.textContent = text;
+  const meta = document.createElement('div');
+  meta.className = 'meta';
+  meta.textContent = role === 'user' ? 'You' : 'Assistant';
+  msg.appendChild(bubble);
+  msg.appendChild(meta);
+  win.appendChild(msg);
+  // animate bubble in
+  bubble.style.animation = 'bubbleIn 320ms cubic-bezier(.2,.9,.2,1) both';
+  win.scrollTop = win.scrollHeight;
+}
+
+// simple count-up animation for stat cards
+function animateCount(el, to) {
+  const start = 0;
+  const duration = 800;
+  let startTime = null;
+  function step(ts) {
+    if (!startTime) startTime = ts;
+    const progress = Math.min((ts - startTime) / duration, 1);
+    const value = Math.floor(progress * (to - start) + start);
+    el.innerText = value;
+    if (progress < 1) requestAnimationFrame(step);
+  }
+  requestAnimationFrame(step);
+}
+
+// entrance animations + focus behavior
+document.addEventListener('DOMContentLoaded', () => {
+  document.querySelectorAll('.card').forEach((c, i) => {
+    setTimeout(() => c.classList.add('animate-in'), 70 * i);
+  });
+  const chatInput = document.getElementById('chatInput');
+  if (chatInput) chatInput.focus();
+  initCharts();
+  initThemeToggle();
+  // if on dashboard, load disputes (app.js already calls loadDisputes elsewhere)
+  if (typeof loadDisputes === 'function') loadDisputes();
+});
+
+function submitDisputeChat() {
+  const input = document.getElementById('chatInput');
+  const text = (input && input.value || '').trim();
+  if (!text) return;
+  appendMessage('user', text);
+  input.value = '';
+
+  const spinner = document.getElementById('spinner');
+  const statusEl = document.getElementById('statusText');
+  const explanationEl = document.getElementById('explanationText');
+  spinner.setAttribute('aria-hidden','false');
+  statusEl.innerText = 'Processing...';
+  explanationEl.innerText = '';
+
+  fetch('/dispute', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ message: text }) })
+    .then(res => res.json())
+    .then(data => {
+      if (data.questions && data.questions.length) {
+        appendMessage('bot', data.questions[0]);
+        statusEl.innerText = 'Need more information';
+        explanationEl.innerText = data.questions[0];
+      } else {
+        const reply = data.explanation || data.status || 'Done';
+        appendMessage('bot', reply);
+        statusEl.innerText = data.status || 'Result';
+        explanationEl.innerText = data.explanation || '';
+      }
+    })
+    .catch(() => {
+      appendMessage('bot', 'Sorry — something went wrong.');
+      statusEl.innerText = 'Error';
+      explanationEl.innerText = 'Something went wrong. Please try again.';
+    })
+    .finally(() => spinner.setAttribute('aria-hidden','true'));
+}

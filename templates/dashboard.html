@@ -20,25 +20,33 @@
   <main class="dashboard" role="main">
     <div class="dashboard-top">
       <div class="cards">
-        <div class="stat card">
+        <div class="stat card stat-highlight">
           <div class="stat-value" id="totalCount">—</div>
           <div class="stat-label">Total</div>
         </div>
-        <div class="stat card">
-          <div class="stat-value" id="openCount">—</div>
-          <div class="stat-label">Open</div>
-        </div>
-        <div class="stat card">
+        <div class="stat card stat-approved">
           <div class="stat-value" id="resolvedCount">—</div>
-          <div class="stat-label">Resolved</div>
+          <div class="stat-label">Approved</div>
         </div>
-        <div class="stat card">
+        <div class="stat card stat-pending">
+          <div class="stat-value" id="openCount">—</div>
+          <div class="stat-label">Pending</div>
+        </div>
+        <div class="stat card stat-rejected">
           <div class="stat-value" id="rejectedCount">—</div>
           <div class="stat-label">Rejected</div>
         </div>
       </div>
+
+      <div class="chart-card card">
+        <canvas id="statusChart" width="300" height="300" aria-label="Dispute status chart"></canvas>
+      </div>
+
       <div class="filters card">
-        <input id="searchInput" placeholder="Search by transaction, merchant, or UTR" aria-label="Search disputes" />
+        <div class="search-wrap">
+          <input id="searchInput" placeholder="Search by transaction, merchant, or UTR" aria-label="Search disputes" />
+          <button id="clearSearch" class="clear-btn" aria-label="Clear search">✕</button>
+        </div>
       </div>
     </div>
 
@@ -61,6 +69,7 @@
     </section>
   </main>
 
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="/static/app.js"></script>
   <script>
     // Render fetched disputes using helper in app.js
